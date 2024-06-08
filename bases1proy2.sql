@@ -172,3 +172,177 @@ select count(*) from site;
 select count(*) from taxon;
 select count(*) from specimen;
 select count(*) from gathering;
+
+-- terminan las tablas del esquema inbio, lo siguiente es del esquema specimen_datamart
+
+-- ********* CREATE TABLES *************
+
+CREATE TABLE TAXON(
+	taxon_id SERIAL PRIMARY KEY,
+	kingdom_name TEXT,
+	phylum_division_name TEXT,
+	class_name TEXT,
+	order_name TEXT,
+	family_name TEXT,
+	genus_name TEXT,
+	species_name TEXT,
+	scientific_name TEXT
+);
+
+
+CREATE TABLE SITE(
+	site_id SERIAL PRIMARY KEY,
+	Latitude DOUBLE PRECISION NOT NULL,
+	Longitude DOUBLE PRECISION NOT NULL,
+	site_description TEXT NOT NULL
+);
+
+
+CREATE TABLE specimen_datamart.GATHERING_RESPONSIBLE(
+	gathering_responsible_ID SERIAL PRIMARY KEY,
+	_name TEXT NOT NULL
+);
+
+
+CREATE TABLE specimen_datamart.GATHERING_DATE(
+	gathering_id SERIAL PRIMARY KEY,
+    month INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+	year INTEGER NOT NULL
+);
+
+
+CREATE TABLE specimen_datamart.SPECIMEN_FACT(
+	specimen_id SERIAL PRIMARY KEY,
+	taxon_id INTEGER,
+	gathering_id INTEGER,
+	gathering_responsible_ID INTEGER,
+	site_id INTEGER,
+	specimen_cost DOUBLE PRECISION,
+    -- llaves a las 4 dimensiones que conectan la estrella
+	FOREIGN KEY(taxon_id) REFERENCES specimen_datamart.TAXON(taxon_id),
+	FOREIGN KEY(gathering_id) REFERENCES specimen_datamart.GATHERING_DATE(gathering_id),
+	FOREIGN KEY(gathering_responsible_ID) REFERENCES specimen_datamart.GATHERING_RESPONSIBLE(gathering_responsible_ID),
+	FOREIGN KEY(site_id) REFERENCES specimen_datamart.SITE(site_id)
+);
+
+
+-- ********* procedimientos del datamart **************
+CREATE OR REPLACE PROCEDURE insert_site_star_dimension()
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN SELECT * FROM inbio.site LOOP
+        INSERT INTO specimen_datamart.site (site_id, latitude, longitude, site_description)
+        VALUES (rec.site_id, rec.latitude, rec.longitude, rec.site_description);
+    END LOOP;
+END;
+$$;
+
+
+CREATE OR REPLACE PROCEDURE insert_gathresp_star_dimension()
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN SELECT gathering_responsible_id, _name FROM inbio.gathering_responsible LOOP
+        INSERT INTO specimen_datamart.gathering_responsible (gathering_responsible_id, _name)
+        VALUES (rec.gathering_responsible_id, rec._name);
+    END LOOP;
+END;
+$$;
+
+
+CREATE OR REPLACE PROCEDURE insert_gathering_star_dimension()
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    rec RECORD;
+    day_to_insert INTEGER;
+    month_to_insert INTEGER;
+    year_to_insert INTEGER;
+BEGIN
+    FOR rec IN SELECT gathering_id, gathering_date FROM inbio.gathering LOOP
+        day_to_insert := EXTRACT(DAY FROM rec.gathering_date);
+        month_to_insert := EXTRACT(MONTH FROM rec.gathering_date);
+        year_to_insert := EXTRACT(YEAR FROM rec.gathering_date);
+
+        IF NOT EXISTS (
+            SELECT 1 FROM specimen_datamart.gathering_date
+            WHERE month = month_to_insert AND day = day_to_insert AND year = year_to_insert
+        ) THEN
+            INSERT INTO specimen_datamart.gathering_date (gathering_id, month, day, year)
+            VALUES (rec.gathering_id, month_to_insert, day_to_insert, year_to_insert);
+        END IF;
+    END LOOP;
+END;
+$$;
+
+
+CREATE OR REPLACE PROCEDURE insert_taxon_star_dimension()
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    rec RECORD;
+BEGIN
+    FOR rec IN SELECT * FROM inbio.taxon LOOP
+        INSERT INTO specimen_datamart.taxon (taxon_id, kingdom_name, phylum_division_name, class_name,
+            order_name, family_name, genus_name, species_name, scientific_name)
+        VALUES (rec.taxon_id, rec.kingdom_name, rec.phylum_division_name, rec.class_name,
+            rec.order_name, rec.family_name, rec.genus_name, rec.species_name, rec.scientific_name
+        );
+    END LOOP;
+END;
+$$;
+
+
+CREATE OR REPLACE PROCEDURE load_fact_group()
+LANGUAGE plpgsql AS
+$$
+DECLARE
+    rec RECORD;
+    ind INTEGER;
+    day_to_insert INTEGER;
+    month_to_insert INTEGER;
+    year_to_insert INTEGER;
+BEGIN
+    FOR rec IN
+        SELECT
+            specimen_id, specimen_description, specimen_cost, inbio.specimen.taxon_id,
+            inbio.gathering.gathering_date, inbio.gathering.site_id, inbio.gathering.gathering_responsible_id
+        FROM inbio.specimen
+        JOIN inbio.gathering ON inbio.specimen.gathering_id = inbio.gathering.gathering_id
+    LOOP
+        day_to_insert := EXTRACT(DAY FROM rec.gathering_date);
+        month_to_insert := EXTRACT(MONTH FROM rec.gathering_date);
+        year_to_insert := EXTRACT(YEAR FROM rec.gathering_date);
+
+        SELECT gathering_id INTO ind
+        FROM specimen_datamart.gathering_date
+        WHERE month = month_to_insert AND day = day_to_insert AND year = year_to_insert;
+
+        INSERT INTO specimen_datamart.specimen_fact (
+            specimen_id, taxon_id, gathering_id,
+            gathering_responsible_id, site_id, specimen_cost
+        ) VALUES (rec.specimen_id,
+                  rec.taxon_id,
+                  ind,
+                  rec.gathering_responsible_id,
+                  rec.site_id,
+                  rec.specimen_cost
+        );
+    END LOOP;
+END;
+$$;
+
+-- llamada a los procedimientos necesarios para llenar las dimensiones y la tabla de hechos
+BEGIN;
+    call insert_site_star_dimension();
+    call insert_gathresp_star_dimension();
+    call insert_gathering_star_dimension();
+    call insert_taxon_star_dimension();
+    call fill_fact_group();
+END;
