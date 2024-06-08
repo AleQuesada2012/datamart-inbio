@@ -53,6 +53,14 @@ create table SPECIMEN(
 
 
 -- ************** procedimientos de inbio ******************
+
+-- Procedure: insert_site
+-- Descripción: Inserta un nuevo sitio a la tabla inbio.SITE si no existe y si los parámetros no son nulos.
+-- Parámetros de entrada:
+--   id_site: INTEGER - ID del sitio.
+--   lat: DOUBLE PRECISION - Coordenada latitudinal del sitio.
+--   long: DOUBLE PRECISION - Coordenada longitudinal del sitio.
+--   description: TEXT - Descripción del sitio (algunos, su dirección).
 CREATE OR REPLACE PROCEDURE insert_site(id_site INTEGER, lat DOUBLE PRECISION, long DOUBLE PRECISION, description TEXT)
 LANGUAGE plpgsql AS
 $$
@@ -64,7 +72,12 @@ $$
 	END;
 $$;
 
-
+-- Function: insert_gath_resp
+-- Description: Inserta el nombre de un nuevo responsable si no existe y el nombre parámetro no es nulo.
+-- Input Parameters:
+--   name_to_insert: TEXT - Nombre del responsable de la recolección.
+-- Return Value:
+--   INTEGER - ID del responsable insertado según el sequence autogenerado para la llave primaria.
 CREATE OR REPLACE FUNCTION insert_gath_resp(name_to_insert TEXT)
 RETURNS INTEGER
 LANGUAGE plpgsql AS
@@ -80,7 +93,19 @@ $$
 	END;
 $$;
 
-
+-- Procedure: insert_taxon
+-- Description: Inserta un nuevo taxón a la tabla inbio.TAXON si aún no existe. Se destaca su uso de EXISTS y SELECT 1 para
+-- descartar la existencia de un duplicado.
+-- Input Parameters:
+--   id_taxon: INTEGER - ID del taxón.
+--   kingdom: TEXT - nombre del reino del taxón.
+--   phylum: TEXT - nombre del Filo o División del taxón.
+--   cclass: TEXT - nombre de la Clase del taxón. Se usa cclass con doble c por si diera problemas con palabras reservadas.
+--   _order: TEXT - nombre del Orden al que pertenece el taxón.
+--   family: TEXT - nombre de la Familia a la que pertenece el taxón.
+--   genus: TEXT - nombre del Género del taxón.
+--   species: TEXT - nombre común o nombre de especie
+--   sci_name: TEXT - nombre científico.
 CREATE OR REPLACE PROCEDURE insert_taxon(id_taxon INTEGER, kingdom TEXT, phylum TEXT, cclass TEXT, _order TEXT, family TEXT, genus TEXT, species TEXT, sci_name TEXT)
 LANGUAGE plpgsql AS
 $$
@@ -92,6 +117,14 @@ $$
 	END;
 $$;
 
+-- Function: insert_gathering
+-- Description: Inserta un nuevo registro a las recolecciones si no existe y todos los parámetros son válidos.
+-- Input Parameters:
+--   fechaxd: DATE - Fecha registrada de la recolección.
+--   gath_resp_id: INTEGER - ID del responsable de la recolección.
+--   id_site: INTEGER - ID del sitio en que se registró la recolección.
+-- Return Value:
+--   INTEGER - ID de la recolección.
 CREATE OR REPLACE FUNCTION insert_gathering(fechaxd DATE, gath_resp_id INTEGER, id_site INTEGER)
 RETURNS INTEGER
 LANGUAGE plpgsql AS
@@ -108,7 +141,13 @@ $$
 	END;
 $$;
 
-
+-- Procedure: insert_species
+-- Description: Inserta un nuevo espécimen a la tabla inbio.SPECIMEN si su ID de recolección ya existe.
+-- Input Parameters:
+--   id_taxon: INTEGER - ID del taxón
+--   gath_id: INTEGER - ID de la recolección.
+--   description: TEXT - Descripción del espécimen.
+--   spec_cost: DOUBLE PRECISION - Costo asociado con recolectar el espécimen, importante para el datmart más adelante.
 CREATE OR REPLACE PROCEDURE insert_species(id_taxon INTEGER, gath_id INTEGER, description TEXT, spec_cost DOUBLE PRECISION)
 LANGUAGE plpgsql AS
 $$
@@ -120,6 +159,10 @@ $$
 	END;
 $$;
 
+-- Procedure: normalizar_tablas
+-- Description: Se llama para normalizar las tablas en el esquema inbio a partir de la tabla del CSV
+-- Lo realiza insertando registros a varias tablas por medio de la invocación de los procedimientos y funciones definidos anteriormente.
+-- No emplea los cursores o punteros, utiliza FOR-LOOPs y la variable RECORD que aloja completo un registro para cada fila.
 CREATE OR REPLACE PROCEDURE normalizar_tablas()
 LANGUAGE plpgsql AS
 $$
@@ -163,6 +206,7 @@ BEGIN
     END LOOP;
 END;
 $$;
+
 
 CALL normalizar_tablas();
 
@@ -230,6 +274,11 @@ CREATE TABLE specimen_datamart.SPECIMEN_FACT(
 
 
 -- ********* procedimientos del datamart **************
+
+-- Procedure: insert_site_star_dimension
+-- Description: Inserta la información del sitio desde la tabla inbio.SPECIMEN a la de la dimensión en el patrón estrella
+-- Input Parameters: ninguno
+-- Se encarga de recorrer Site con un for y una variable de registro, trae toda la información de la tabla.
 CREATE OR REPLACE PROCEDURE insert_site_star_dimension()
 LANGUAGE plpgsql AS
 $$
@@ -243,7 +292,10 @@ BEGIN
 END;
 $$;
 
-
+-- Procedure: insert_gathresp_star_dimension
+-- Description: Inserta la información del responsable desde la tabla inbio.GATHERING_RESPONSIBLE a la de la dimensión en el patrón estrella
+-- Input Parameters: ninguno
+-- Se encarga de recorrer la tabla con un for y una variable de registro, trae toda la información de la tabla.
 CREATE OR REPLACE PROCEDURE insert_gathresp_star_dimension()
 LANGUAGE plpgsql AS
 $$
@@ -257,7 +309,11 @@ BEGIN
 END;
 $$;
 
-
+-- Procedure: insert_gathering_star_dimension
+-- Description: Inserta la información de la recolección desde la tabla inbio.GATHERING a la de la dimensión en el patrón estrella
+-- Input Parameters: ninguno
+-- Se encarga de recorrer la tabla con un for y una variable de registro, trae toda la información de la tabla.
+-- utiliza la función EXTRACT para desacoplar la fecha y convertirla en día, mes y año por aparte, algo de utilidad para la estrella.
 CREATE OR REPLACE PROCEDURE insert_gathering_star_dimension()
 LANGUAGE plpgsql AS
 $$
@@ -283,7 +339,10 @@ BEGIN
 END;
 $$;
 
-
+-- Procedure: insert_taxon_star_dimension
+-- Description: Inserta la información del taxon desde la tabla inbio.TAXON a la de la dimensión en el patrón estrella
+-- Input Parameters: ninguno
+-- Se encarga de recorrer TAXON con un for y una variable de registro, trae toda la información de la tabla.
 CREATE OR REPLACE PROCEDURE insert_taxon_star_dimension()
 LANGUAGE plpgsql AS
 $$
@@ -300,7 +359,12 @@ BEGIN
 END;
 $$;
 
-
+-- Procedure: load_fact_group()
+-- Description: Es el más complejo de los de este esquema. Se encarga de llenar los registros de la tabla de hechos a partir
+-- de la información obtenida del modelo relacional.
+-- Input Parameters: ninguno
+-- Se encarga de recorrer una tabla generada por un SELECT a partir de una unión (join) y obtener los registros necesarios
+-- para llenar la tabla de hechos.
 CREATE OR REPLACE PROCEDURE load_fact_group()
 LANGUAGE plpgsql AS
 $$
