@@ -210,7 +210,9 @@ CREATE TABLE specimen_datamart.GATHERING_DATE(
     day INTEGER NOT NULL,
 	year INTEGER NOT NULL
 );
-
+-- tratando de agilizar las consultas para los filtros
+create index on GATHERING_DATE(month);
+create index on GATHERING_DATE(year);
 
 CREATE TABLE specimen_datamart.SPECIMEN_FACT(
 	specimen_id SERIAL PRIMARY KEY,
@@ -346,3 +348,20 @@ BEGIN;
     call insert_taxon_star_dimension();
     call fill_fact_group();
 END;
+
+select count(*) from SPECIMEN_FACT;
+
+SELECT MIN(EXTRACT(YEAR FROM initial_date_time)) AS smallest_year
+FROM inbio.inbio_data;
+
+SELECT initial_date_time, EXTRACT(YEAR FROM initial_date_time) AS year
+FROM inbio.inbio_data
+ORDER BY year ASC;
+-- para encontrar cuántos había con el año 6 que me pareció super raro jaja
+SELECT COUNT(*)
+FROM inbio.inbio_data
+WHERE EXTRACT(YEAR FROM initial_date_time) = 6;
+
+
+-- esto es para exportar la base a LucidChart y diagramar
+SET enable_nestloop=0;SELECT 'postgresql' AS dbms,t.table_catalog,t.table_schema,t.table_name,c.column_name,c.ordinal_position,c.data_type,c.character_maximum_length,n.constraint_type,k2.table_schema,k2.table_name,k2.column_name FROM information_schema.tables t NATURAL LEFT JOIN information_schema.columns c LEFT JOIN(information_schema.key_column_usage k NATURAL JOIN information_schema.table_constraints n NATURAL LEFT JOIN information_schema.referential_constraints r)ON c.table_catalog=k.table_catalog AND c.table_schema=k.table_schema AND c.table_name=k.table_name AND c.column_name=k.column_name LEFT JOIN information_schema.key_column_usage k2 ON k.position_in_unique_constraint=k2.ordinal_position AND r.unique_constraint_catalog=k2.constraint_catalog AND r.unique_constraint_schema=k2.constraint_schema AND r.unique_constraint_name=k2.constraint_name WHERE t.TABLE_TYPE='BASE TABLE' AND t.table_schema NOT IN('information_schema','pg_catalog');
